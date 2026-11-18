@@ -1,0 +1,27 @@
+/workspace/.venv/lib/python3.11/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient as TestClient  # noqa
+复现库: /tmp/repro_race_xzb8_w1f/repro.db 日期: 2026-11-18
+==============================================================================
+场景一：异版本并发发布（vA 必填 a_only vs vB 必填 b_only），共 30 轮
+  第0轮 终态: [{'version': 'vB0', 'status': '停用', 'required_fields': 'order_id,b_only'}, {'version': 'vA0', 'status': '启用', 'required_fields': 'order_id,a_only'}]
+  第1轮 终态: [{'version': 'vB1', 'status': '停用', 'required_fields': 'order_id,b_only'}, {'version': 'vA1', 'status': '启用', 'required_fields': 'order_id,a_only'}]
+  第2轮 终态: [{'version': 'vA2', 'status': '停用', 'required_fields': 'order_id,a_only'}, {'version': 'vB2', 'status': '启用', 'required_fields': 'order_id,b_only'}]
+  统计: {'vA': 18, 'vB': 12, 'double_enabled': 0, 'zero_enabled': 0, 'errors': 0}
+  => 同为 200 成功，但生效版本随机；先到者可能被后到者停用（后到覆盖先到必填）
+==============================================================================
+场景二：同版本号双发（只落一版？失败如何闭包？）
+  值班甲 响应: (200, '{"ok":true,"version":"vDup"}')
+  值班乙 响应: ('EXC', "IntegrityError('UNIQUE constraint failed: contracts.version')")
+  库内 vDup 行数: 1 -> [{'version': 'vDup', 'status': '启用', 'required_fields': 'order_id,dup_field'}]
+  => 一方裸 500 丢版，无争用留痕，失败闭包不清晰
+==============================================================================
+场景三：低 busy_timeout 下并发（database is locked 是否直接炸给调用方）
+  值班乙 响应: (200, '{"ok":true,"version":"vL2"}')
+  值班甲 响应: (200, '{"ok":true,"version":"vL1"}')
+  => 锁等待直接表现为 500 异常，没有串行排队、没有争用册记录
+==============================================================================
+场景四：自动提交+语句间屏障放大交错（互相把对方停用 / 双启用）
+  终态: []
+  启用中的版本: [] => 双停用
+==============================================================================
+复现完成：缺陷成立——丢版/裸500/覆盖先到/无争用留痕，且无串行保证。

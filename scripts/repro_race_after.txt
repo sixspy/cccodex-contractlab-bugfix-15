@@ -1,0 +1,20 @@
+/workspace/.venv/lib/python3.11/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient as TestClient  # noqa
+验证库: /tmp/repro_race_rzkh8lch/repro.db 日期: 2026-11-18
+==============================================================================
+场景一：异版本并发（空主题，30 轮）—— 每轮须一胜一争用、启用稿唯一
+  统计: {'one_win_one_contention': 30, 'bad': 0}
+==============================================================================
+场景二：同版本双发 —— 只落一版，另一版结构化 409 留痕，无裸 500
+  乙: 409 发布争用 胜=vDup 负=vDup
+  甲: 200 None 胜=None 负=None
+  vDup 落库行数: 1 （应为 1）；无 5xx: True
+==============================================================================
+场景三：低 busy_timeout —— 无 database is locked 外泄，闭包结构化
+  响应: {'甲': 409, '乙': 200}
+==============================================================================
+场景四：交错放大 —— 门串行化后无双停用/双启用
+  终态: [{'version': 'vX', 'status': '启用', 'required_fields': 'order_id,x_field'}] | 启用数: 1
+==============================================================================
+争用册留痕分类统计: {'发布争用': 33, '发布落版': 33, '当日择路': 1}
+结论: 全部口径通过 ✅

@@ -52,8 +52,10 @@ createApp({
     const token=ref(localStorage.getItem('contractlab_token')||'');
     const user=ref(localStorage.getItem('contractlab_user')||'');
     const username=ref('admin'), password=ref('123456'), err=ref(''), tab=ref(0), actionErr=ref('');
-    const contracts=ref([]), batches=ref([]), buffers=ref([]), recon=ref({});
+    const contracts=ref([]), batches=ref([]), buffers=ref([]), recon=ref({}), ledger=ref({items:[],path:null});
     const form=ref({subject:'订单入站', payload_fields:'order_id,amount'});
+    const pub=ref({subject:'订单入站', version:'', required_fields:'order_id,amount', track:'正式', expected_version:''});
+    const pubMsg=ref('');
     const nav=['契约版本','入站校验','双写缓冲','契约对账'];
     function auth(){return {Authorization:'Bearer '+token.value,'Content-Type':'application/json'};}
     async function login(){
@@ -81,6 +83,8 @@ createApp({
       buffers.value=Array.isArray(u.items)?u.items:[];
       const q=await loadJson('/api/reconcile'); if(q===null) return;
       recon.value=q&&typeof q==='object'?q:{};
+      const l=await loadJson('/api/contention-ledger'); if(l===null) return;
+      ledger.value=l&&Array.isArray(l.items)?l:{items:[],path:null};
     }
     async function validate(){
       actionErr.value='';
@@ -88,8 +92,18 @@ createApp({
       const j=await r.json(); actionErr.value=r.ok?('校验结果：'+j.result+(j.missing?('；缺 '+j.missing.join(',')):'')):(j.detail||'失败');
       await refresh();
     }
+    async function publish(){
+      pubMsg.value='';
+      const body={subject:pub.value.subject,version:pub.value.version,required_fields:pub.value.required_fields,track:pub.value.track};
+      if(pub.value.expected_version) body.expected_version=pub.value.expected_version;
+      const r=await fetch('/api/contracts/publish',{method:'POST',headers:auth(),body:JSON.stringify(body)});
+      const j=await r.json();
+      if(r.ok){ pubMsg.value='已发布 '+j.version+'（'+j.path+'路径，'+j.status+'）'; pub.value.version=''; }
+      else { pubMsg.value=(j.code?j.code+'：':'')+(j.detail||'发布失败')+(j.winner_version?('；先到胜方 '+j.winner_version):''); }
+      await refresh();
+    }
     onMounted(()=>{if(token.value)refresh();});
-    return {token,user,username,password,err,tab,nav,contracts,batches,buffers,recon,form,actionErr,login,logout,validate};
+    return {token,user,username,password,err,tab,nav,contracts,batches,buffers,recon,ledger,form,pub,pubMsg,actionErr,login,logout,validate,publish};
   },
   template:`
   <div v-if="!token" class="login">
@@ -113,6 +127,26 @@ createApp({
       <tbody><tr v-for="c in contracts" :key="c.id">
         <td>{{c.version}}</td><td>{{c.subject}}</td><td>{{c.mode}} / {{c.track}}</td><td>{{c.status}}</td><td>{{c.required_fields}}</td>
       </tr></tbody></table>
+    </div>
+    <div class="pair" v-show="tab===0">
+      <div class="card">
+        <h2>发布新版本（甲路径·按主题加锁预查）</h2>
+        <label>主题</label><input v-model="pub.subject"/>
+        <label>版本号</label><input v-model="pub.version" placeholder="如 v5"/>
+        <label>必填字段（逗号分隔）</label><input v-model="pub.required_fields"/>
+        <label>轨</label><input v-model="pub.track" placeholder="正式 / 影子"/>
+        <label>基线版本（可选，留空则同主题已有启用稿即记争用）</label><input v-model="pub.expected_version"/>
+        <button class="primary" @click="publish">串行发布</button>
+        <div class="err">{{pubMsg}}</div>
+      </div>
+      <div class="card">
+        <h2>发布争用册 <span class="meta">当日路径：{{ledger.path||'未择定'}}</span></h2>
+        <table><thead><tr><th>种类</th><th>主题</th><th>胜方</th><th>后到</th><th>说明</th></tr></thead>
+          <tbody><tr v-for="x in (ledger.items||[]).slice(0,10)" :key="x.id">
+            <td><span class="stamp" :class="{bad:x.kind!=='发布落版' && x.kind!=='当日择路'}">{{x.kind}}</span></td>
+            <td>{{x.subject}}</td><td>{{x.winner_version}}</td><td>{{x.loser_version}}</td><td>{{x.detail}}</td>
+          </tr></tbody></table>
+      </div>
     </div>
     <div class="pair" v-show="tab===1">
       <div class="card">
@@ -140,6 +174,7 @@ createApp({
     <div class="card" v-show="tab===3">
       <h2>契约对账摘要</h2>
       <p>入站 {{recon.ingress_total}} · 通过 {{recon.passed}} · 缓冲 {{recon.buffered}} · 拒收 {{recon.rejected}} · 缓冲行 {{recon.buffer_rows}} · 对齐 {{recon.aligned}}</p>
+      <p>发布争用 {{recon.contention_count||0}} · 争用偏了 {{recon.deviation_count||0}} · 重复正式启用 {{(recon.active_formal_dupes||[]).length}} · 发布对齐 {{recon.publish_aligned}}</p>
     </div>
   </div>`
 }).mount('#app');
