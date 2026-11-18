@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>入站契约</title>
+<script src="/static/vue.global.prod.js"></script>
+<style>
+  :root{--paper:#f7f1e6;--ink:#2a2118;--line:#d9cbb6;--accent:#8b4513;--ok:#2f6f4e;--bad:#9b2c2c}
+  *{box-sizing:border-box} body{margin:0;background:radial-gradient(900px 500px at 80% -10%,#fff8ea,transparent),var(--paper);color:var(--ink);font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  .sheet{max-width:980px;margin:0 auto;padding:28px 22px 48px}
+  header{border-bottom:2px solid var(--ink);padding-bottom:14px;margin-bottom:18px;display:flex;justify-content:space-between;gap:16px}
+  h1{font-family:Georgia,"Songti SC",serif;font-size:34px;margin:0;letter-spacing:.02em}
+  .lede{margin-top:6px;color:#6b5b4b;max-width:46ch;line-height:1.5}
+  .steps{display:flex;gap:0;margin:18px 0 22px;border:1px solid var(--line);background:#fffaf2}
+  .steps button{flex:1;border:0;border-right:1px solid var(--line);background:transparent;padding:12px 8px;cursor:pointer;font-weight:500}
+  .steps button:last-child{border-right:0}
+  .steps button.on{background:#2a2118;color:#f7f1e6}
+  .card{background:#fffaf2;border:1px solid var(--line);padding:16px 16px 8px;margin-bottom:14px}
+  h2{font-family:Georgia,"Songti SC",serif;font-size:22px;margin:0 0 10px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{border-bottom:1px solid var(--line);padding:10px 6px;text-align:left;vertical-align:top}
+  th{font-size:12px;text-transform:none;color:#6b5b4b}
+  input{width:100%;border:1px solid var(--line);background:#fff;padding:9px 10px;margin:6px 0 12px;border-radius:2px}
+  .primary{background:var(--accent);color:#fff;border:0;padding:10px 14px;cursor:pointer}
+  .ghost{background:transparent;border:1px solid var(--ink);padding:7px 10px;cursor:pointer}
+  .login{max-width:420px;margin:14vh auto;background:#fffaf2;border:1px solid var(--line);padding:28px}
+  .err{color:var(--bad);min-height:18px}
+  .meta{font-size:13px;color:#6b5b4b}
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .stamp{display:inline-block;border:1.5px solid var(--ok);color:var(--ok);padding:2px 8px;font-size:12px}
+  .stamp.bad{border-color:var(--bad);color:var(--bad)}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<noscript><p style="padding:24px;background:#b91c1c;color:#fff">需要启用 JavaScript</p></noscript>
+<div id="boot-hint" style="display:none;padding:24px;font-family:sans-serif;background:#fef3c7;color:#111">页面脚本未加载。请确认可访问 /static/vue.global.prod.js</div>
+<script>
+setTimeout(function () {
+  if (!window.Vue) {
+    var e = document.getElementById("boot-hint");
+    if (e) e.style.display = "block";
+  }
+}, 800);
+</script>
+
+<script>
+const {createApp,ref,onMounted}=Vue;
+createApp({
+  setup(){
+    const token=ref(localStorage.getItem('contractlab_token')||'');
+    const user=ref(localStorage.getItem('contractlab_user')||'');
+    const username=ref('admin'), password=ref('123456'), err=ref(''), tab=ref(0), actionErr=ref('');
+    const contracts=ref([]), batches=ref([]), buffers=ref([]), recon=ref({});
+    const form=ref({subject:'订单入站', payload_fields:'order_id,amount'});
+    const nav=['契约版本','入站校验','双写缓冲','契约对账'];
+    function auth(){return {Authorization:'Bearer '+token.value,'Content-Type':'application/json'};}
+    async function login(){
+      err.value='';
+      const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:username.value,password:password.value})});
+      const j=await r.json(); if(!r.ok){err.value=j.detail||'登录失败';return;}
+      token.value=j.token; user.value=j.username;
+      localStorage.setItem('contractlab_token',j.token); localStorage.setItem('contractlab_user',j.username);
+      await refresh();
+    }
+    function logout(){token.value='';user.value='';localStorage.removeItem('contractlab_token');localStorage.removeItem('contractlab_user');}
+    async function loadJson(url){
+      const r=await fetch(url,{headers:auth()});
+      const j=await r.json().catch(()=>({}));
+      if(r.status===401){ logout(); return null; }
+      return j;
+    }
+    async function refresh(){
+      if(!token.value) return;
+      const c=await loadJson('/api/contracts'); if(c===null) return;
+      contracts.value=Array.isArray(c.items)?c.items:[];
+      const b=await loadJson('/api/ingress'); if(b===null) return;
+      batches.value=Array.isArray(b.items)?b.items:[];
+      const u=await loadJson('/api/buffers'); if(u===null) return;
+      buffers.value=Array.isArray(u.items)?u.items:[];
+      const q=await loadJson('/api/reconcile'); if(q===null) return;
+      recon.value=q&&typeof q==='object'?q:{};
+    }
+    async function validate(){
+      actionErr.value='';
+      const r=await fetch('/api/ingress/validate',{method:'POST',headers:auth(),body:JSON.stringify(form.value)});
+      const j=await r.json(); actionErr.value=r.ok?('校验结果：'+j.result+(j.missing?('；缺 '+j.missing.join(',')):'')):(j.detail||'失败');
+      await refresh();
+    }
+    onMounted(()=>{if(token.value)refresh();});
+    return {token,user,username,password,err,tab,nav,contracts,batches,buffers,recon,form,actionErr,login,logout,validate};
+  },
+  template:`
+  <div v-if="!token" class="login">
+    <h1>入站契约</h1>
+    <p class="lede">按启用正式契约校验入站字段；缺字段按严格模式拒收或兼容模式进缓冲。</p>
+    <label>用户名</label><input v-model="username"/><label>密码</label><input type="password" v-model="password"/>
+    <div class="err">{{err}}</div><button class="primary" @click="login">打开契约簿</button>
+  </div>
+  <div v-if="token" class="sheet">
+    <header>
+      <div>
+        <h1>入站契约</h1>
+        <div class="lede">Schema 版本约束入站校验，破坏性变更缓冲或拒收，并与落库结果对账。</div>
+      </div>
+      <div class="meta">{{user}} · 本地 SQLite<br/><button class="ghost" style="margin-top:8px" @click="logout">退出</button></div>
+    </header>
+    <div class="steps"><button v-for="(n,i) in nav" :key="n" :class="{on:tab===i}" @click="tab=i">{{i+1}}. {{n}}</button></div>
+    <div class="card" v-show="tab===0">
+      <h2>现行契约</h2>
+      <table><thead><tr><th>版本</th><th>主题</th><th>模式 / 轨</th><th>状态</th><th>必填字段</th></tr></thead>
+      <tbody><tr v-for="c in contracts" :key="c.id">
+        <td>{{c.version}}</td><td>{{c.subject}}</td><td>{{c.mode}} / {{c.track}}</td><td>{{c.status}}</td><td>{{c.required_fields}}</td>
+      </tr></tbody></table>
+    </div>
+    <div class="pair" v-show="tab===1">
+      <div class="card">
+        <h2>提交入站</h2>
+        <label>主题</label><input v-model="form.subject"/>
+        <label>载荷字段</label><input v-model="form.payload_fields"/>
+        <button class="primary" @click="validate">按正式契约校验</button>
+        <div class="err">{{actionErr}}</div>
+      </div>
+      <div class="card">
+        <h2>最近批次</h2>
+        <table><thead><tr><th>批次</th><th>结果</th><th>说明</th></tr></thead>
+        <tbody><tr v-for="b in (batches||[]).slice(0,8)" :key="b.id">
+          <td>#{{b.id}} {{b.subject}}</td>
+          <td><span class="stamp" :class="{bad:b.result!=='通过'}">{{b.result}}</span></td>
+          <td>{{b.detail}}</td>
+        </tr></tbody></table>
+      </div>
+    </div>
+    <div class="card" v-show="tab===2">
+      <h2>双写缓冲</h2>
+      <table><thead><tr><th>缓冲</th><th>批次</th><th>主题</th><th>原因</th></tr></thead>
+      <tbody><tr v-for="b in buffers" :key="b.id"><td>{{b.id}}</td><td>{{b.batch_id}}</td><td>{{b.subject}}</td><td>{{b.reason}}</td></tr></tbody></table>
+    </div>
+    <div class="card" v-show="tab===3">
+      <h2>契约对账摘要</h2>
+      <p>入站 {{recon.ingress_total}} · 通过 {{recon.passed}} · 缓冲 {{recon.buffered}} · 拒收 {{recon.rejected}} · 缓冲行 {{recon.buffer_rows}} · 对齐 {{recon.aligned}}</p>
+    </div>
+  </div>`
+}).mount('#app');
+</script>
+</body>
+</html>
